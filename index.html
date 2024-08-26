@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turn-based Chess-like Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        #board {
+            display: grid;
+            grid-template-columns: repeat(5, 50px);
+            grid-template-rows: repeat(5, 50px);
+            gap: 5px;
+        }
+
+        .cell {
+            width: 50px;
+            height: 50px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .cell.occupied {
+            background-color: #e0e0e0;
+        }
+
+        #message {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+
+        #move-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        #move-controls button {
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #new-game {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Turn-based Chess-like Game</h1>
+    <div id="board"></div>
+    <div id="message">Waiting for another player to join...</div>
+
+    <div id="move-controls" style="display: none;">
+        <button id="move-left">Left</button>
+        <button id="move-right">Right</button>
+        <button id="move-forward">Forward</button>
+        <button id="move-backward">Backward</button>
+        <button id="move-forward-left">Forward-Left</button>
+        <button id="move-forward-right">Forward-Right</button>
+        <button id="move-backward-left">Backward-Left</button>
+        <button id="move-backward-right">Backward-Right</button>
+    </div>
+
+    <button id="new-game" style="display: none;">Start New Game</button>
+
+    <script>
+        const boardElement = document.getElementById('board');
+        const messageElement = document.getElementById('message');
+        const moveControls = document.getElementById('move-controls');
+        const newGameButton = document.getElementById('new-game');
+
+        const moveButtons = {
+            "L": document.getElementById('move-left'),
+            "R": document.getElementById('move-right'),
+            "F": document.getElementById('move-forward'),
+            "B": document.getElementById('move-backward'),
+            "FL": document.getElementById('move-forward-left'),
+            "FR": document.getElementById('move-forward-right'),
+            "BL": document.getElementById('move-backward-left'),
+            "BR": document.getElementById('move-backward-right')
+        };
+
+        let selectedCharacter = null;
+        let player = null;
+        let websocket = null;
+        let currentTurn = null;
+
+        function setupBoard(board) {
+            boardElement.innerHTML = '';
+            for (let i = 0; i < board.length; i++) {
+                for (let j = 0; j < board[i].length; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (board[i][j]) {
+                        cell.classList.add('occupied');
+                        cell.textContent = board[i][j];
+                    }
+                    cell.dataset.row = i;
+                    cell.dataset.col = j;
+                    cell.onclick = () => onCellClick(i, j, board[i][j]);
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function onCellClick(row, col, character) {
+            if (currentTurn !== player || !character || !character.startsWith(player)) {
+                return;
+            }
+            selectedCharacter = character;
+            showMoveControls(character);
+        }
+
+        function showMoveControls(character) {
+            moveControls.style.display = 'flex';
+            if (character.includes('H2')) {
+                moveButtons['FL'].style.display = 'inline-block';
+                moveButtons['FR'].style.display = 'inline-block';
+                moveButtons['BL'].style.display = 'inline-block';
+                moveButtons['BR'].style.display = 'inline-block';
+            } else {
+                moveButtons['FL'].style.display = 'none';
+                moveButtons['FR'].style.display = 'none';
+                moveButtons['BL'].style.display = 'none';
+                moveButtons['BR'].style.display = 'none';
+            }
+        }
+
+        function hideMoveControls() {
+            moveControls.style.display = 'none';
+        }
+
+        function sendMove(direction) {
+            if (selectedCharacter) {
+                websocket.send(JSON.stringify({
+                    type: 'move',
+                    character_name: selectedCharacter,
+                    move_direction: direction
+                }));
+                hideMoveControls();
+            }
+        }
+
+        function initializeGame() {
+            const playerASetup = ['A-P1', 'A-P1', 'A-H1', 'A-H2', 'A-P1'];
+            const playerBSetup = ['B-P1', 'B-P1', 'B-H1', 'B-H2', 'B-P1'];
+
+            websocket.send(JSON.stringify({
+                type: 'initialize',
+                player_a_pieces: playerASetup,
+                player_b_pieces: playerBSetup
+            }));
+        }
+
+        function setupWebSocket() {
+            websocket = new WebSocket('ws://localhost:6789');
+
+            websocket.onopen = () => {
+                messageElement.textContent = 'Connected to the server. Waiting for another player...';
+            };
+
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'assign_player') {
+                    player = data.player;
+                    messageElement.textContent = `You are Player ${player}. Waiting for game to start...`;
+                    if (player === 'A') {
+                        initializeGame();
+                    }
+                } else if (data.type === 'game_state') {
+                    setupBoard(data.board);
+                    currentTurn = data.current_turn;
+                    messageElement.textContent = `Player ${currentTurn}'s turn`;
+                } else if (data.type === 'invalid_move') {
+                    alert(`Invalid Move: ${data.message}`);
+                } else if (data.type === 'game_over') {
+                    messageElement.textContent = `Game Over! Player ${data.winner} wins!`;
+                    newGameButton.style.display = 'block';
+                }
+            };
+
+            websocket.onclose = () => {
+                messageElement.textContent = 'Disconnected from the server.';
+            };
+        }
+
+        moveButtons['L'].onclick = () => sendMove('L');
+        moveButtons['R'].onclick = () => sendMove('R');
+        moveButtons['F'].onclick = () => sendMove('F');
+        moveButtons['B'].onclick = () => sendMove('B');
+        moveButtons['FL'].onclick = () => sendMove('FL');
+        moveButtons['FR'].onclick = () => sendMove('FR');
+        moveButtons['BL'].onclick = () => sendMove('BL');
+        moveButtons['BR'].onclick = () => sendMove('BR');
+
+        newGameButton.onclick = () => {
+            websocket.close();
+            setupWebSocket();
+            newGameButton.style.display = 'none';
+        };
+
+        setupWebSocket();
+    </script>
+</body>
+</html>
